@@ -73,7 +73,7 @@ impl Fallible for SharedDeserializeMap {
 }
 
 impl SharedDeserializeRegistry for SharedDeserializeMap {
-    fn get_shared_ptr(&mut self, ptr: *const u8) -> Option<&dyn SharedPointer> {
+    fn get_shared_ptr(&self, ptr: *const u8) -> Option<&dyn SharedPointer> {
         self.shared_pointers.get(&ptr).map(|p| p.as_ref())
     }
 

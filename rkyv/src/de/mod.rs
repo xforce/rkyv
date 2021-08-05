@@ -22,7 +22,7 @@ pub trait SharedPointer {
 #[cfg(feature = "alloc")]
 pub trait SharedDeserializeRegistry: Fallible {
     /// Gets the data pointer of a previously-deserialized shared pointer.
-    fn get_shared_ptr(&mut self, ptr: *const u8) -> Option<&dyn SharedPointer>;
+    fn get_shared_ptr(&self, ptr: *const u8) -> Option<&dyn SharedPointer>;
 
     /// Adds the data address of a deserialized shared pointer to the registry.
     fn add_shared_ptr(
