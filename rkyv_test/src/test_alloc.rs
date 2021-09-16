@@ -47,13 +47,30 @@ mod tests {
 
     #[test]
     #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
-    fn archive_composition() {
+    fn archive_option() {
         test_archive(&Some(Box::new(42)));
         test_archive(&Some("hello world".to_string().into_boxed_str()));
         test_archive(&Some(vec![1, 2, 3, 4].into_boxed_slice()));
         test_archive(&Some("hello world".to_string()));
         test_archive(&Some(vec![1, 2, 3, 4]));
         test_archive(&Some(Box::new(vec![1, 2, 3, 4])));
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn archive_result() {
+        test_archive::<Result<_, ()>>(&Ok(Box::new(42)));
+        test_archive::<Result<_, ()>>(&Ok("hello world".to_string().into_boxed_str()));
+        test_archive::<Result<_, ()>>(&Ok(vec![1, 2, 3, 4].into_boxed_slice()));
+        test_archive::<Result<_, ()>>(&Ok("hello world".to_string()));
+        test_archive::<Result<_, ()>>(&Ok(vec![1, 2, 3, 4]));
+        test_archive::<Result<_, ()>>(&Ok(Box::new(vec![1, 2, 3, 4])));
+        test_archive::<Result<(), _>>(&Err(Box::new(42)));
+        test_archive::<Result<(), _>>(&Err("hello world".to_string().into_boxed_str()));
+        test_archive::<Result<(), _>>(&Err(vec![1, 2, 3, 4].into_boxed_slice()));
+        test_archive::<Result<(), _>>(&Err("hello world".to_string()));
+        test_archive::<Result<(), _>>(&Err(vec![1, 2, 3, 4]));
+        test_archive::<Result<(), _>>(&Err(Box::new(vec![1, 2, 3, 4])));
     }
 
     mod isolate {
@@ -578,6 +595,90 @@ mod tests {
 
     #[test]
     #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn recursive_self_types() {
+        #[derive(Archive, Serialize, Deserialize, Debug, PartialEq)]
+        #[archive(compare(PartialEq))]
+        #[archive_attr(derive(Debug))]
+        // The derive macros don't apply the right bounds from Box so we have to manually specify
+        // what bounds to apply
+        #[archive(bound(serialize = "__S: Serializer"))]
+        pub enum LinkedList<T: Archive>
+        where
+            T::Archived: core::fmt::Debug,
+        {
+            Empty,
+            Node {
+                val: T,
+                #[omit_bounds]
+                next: Box<Self>,
+            },
+        }
+
+        test_archive(&LinkedList::Node {
+            val: 42i32,
+            next: Box::new(LinkedList::Node {
+                val: 100i32,
+                next: Box::new(LinkedList::Empty),
+            }),
+        });
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn complex_bounds() {
+        use ::core::marker::PhantomData;
+
+        trait MyTrait {}
+
+        impl MyTrait for i32 {}
+
+        struct MyStruct<T> {
+            _phantom: PhantomData<T>,
+        }
+
+        impl<T: Archive + MyTrait> Archive for MyStruct<T> {
+            type Archived = MyStruct<T::Archived>;
+            type Resolver = ();
+
+            unsafe fn resolve(&self, _: usize, _: Self::Resolver, _: *mut Self::Archived) {}
+        }
+
+        impl<T: Archive + MyTrait, S: Fallible + MyTrait + ?Sized> Serialize<S> for MyStruct<T> {
+            fn serialize(&self, _: &mut S) -> Result<Self::Resolver, S::Error> {
+                Ok(())
+            }
+        }
+
+        impl<T, D> Deserialize<MyStruct<T>, D> for Archived<MyStruct<T>>
+        where
+            T: Archive + MyTrait,
+            D: Fallible + MyTrait + ?Sized,
+        {
+            fn deserialize(&self, _: &mut D) -> Result<MyStruct<T>, D::Error> {
+                Ok(MyStruct {
+                    _phantom: PhantomData,
+                })
+            }
+        }
+
+        #[derive(Archive, Serialize, Deserialize)]
+        #[archive(bound(archive = "T: MyTrait"))]
+        #[archive(bound(serialize = "__S: MyTrait"))]
+        #[archive(bound(deserialize = "__D: MyTrait"))]
+        enum Node<T> {
+            Nil,
+            Cons {
+                value: T,
+                #[omit_bounds]
+                next: MyStruct<Self>,
+            },
+        }
+
+        impl<T: MyTrait> MyTrait for Node<T> {}
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
     fn archive_more_std() {
         use core::{
             num::NonZeroU8,
@@ -1084,6 +1185,52 @@ mod tests {
 
     #[test]
     #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn repr_c_packed() {
+        #[derive(Archive)]
+        #[archive_attr(repr(C, packed))]
+        struct CPackedRepr {
+            a: u8,
+            b: u32,
+            c: u8,
+        }
+
+        assert_eq!(core::mem::size_of::<ArchivedCPackedRepr>(), 6);
+
+        #[derive(Archive)]
+        #[archive_attr(repr(C))]
+        #[archive_attr(repr(packed))]
+        struct CPackedRepr2 {
+            a: u8,
+            b: u32,
+            c: u8,
+        }
+
+        assert_eq!(core::mem::size_of::<ArchivedCPackedRepr2>(), 6);
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn repr_c_align() {
+        #[derive(Archive)]
+        #[archive_attr(repr(C, align(8)))]
+        struct CAlignRepr {
+            a: u8,
+        }
+
+        assert_eq!(core::mem::align_of::<ArchivedCAlignRepr>(), 8);
+
+        #[derive(Archive)]
+        #[archive_attr(repr(C))]
+        #[archive_attr(repr(align(8)))]
+        struct CAlignRepr2 {
+            a: u8,
+        }
+
+        assert_eq!(core::mem::align_of::<ArchivedCAlignRepr>(), 8);
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
     fn archive_as() {
         // Struct
 
@@ -1431,6 +1578,8 @@ mod tests {
             a: BTreeMap<String, String>,
             #[with(AsVec)]
             b: BTreeSet<String>,
+            #[with(AsVec)]
+            c: BTreeMap<String, String>,
         }
 
         let mut a = BTreeMap::new();
@@ -1444,7 +1593,9 @@ mod tests {
         b.insert("bar".to_string());
         b.insert("fizzbuzz".to_string());
 
-        let value = Test { a, b };
+        let c = BTreeMap::new();
+
+        let value = Test { a, b, c };
 
         let mut serializer = DefaultSerializer::default();
         serializer.serialize_value(&value).unwrap();
@@ -1489,6 +1640,47 @@ mod tests {
 
     #[test]
     #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn with_niche() {
+        use ::core::mem::size_of;
+        use rkyv::with::Niche;
+
+        #[derive(Archive, Serialize, Deserialize)]
+        struct Test {
+            #[with(Niche)]
+            inner: Option<Box<String>>,
+        }
+
+        #[derive(Archive, Serialize, Deserialize)]
+        struct TestNoNiching {
+            inner: Option<Box<String>>,
+        }
+
+        let value = Test {
+            inner: Some(Box::new("hello world".to_string())),
+        };
+        let mut serializer = DefaultSerializer::default();
+        serializer.serialize_value(&value).unwrap();
+        let result = serializer.into_serializer().into_inner();
+        let archived = unsafe { archived_root::<Test>(result.as_slice()) };
+
+        assert!(archived.inner.is_some());
+        assert_eq!(&**archived.inner.as_ref().unwrap(), "hello world");
+        assert_eq!(archived.inner, value.inner);
+
+        let value = Test { inner: None };
+        let mut serializer = DefaultSerializer::default();
+        serializer.serialize_value(&value).unwrap();
+        let result = serializer.into_serializer().into_inner();
+        let archived = unsafe { archived_root::<Test>(result.as_slice()) };
+
+        assert!(archived.inner.is_none());
+        assert_eq!(archived.inner, value.inner);
+
+        assert!(size_of::<Archived<Test>>() < size_of::<Archived<TestNoNiching>>());
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
     fn archive_crate_path() {
         use ::rkyv as alt_path;
 
@@ -1522,6 +1714,26 @@ mod tests {
                 .expect("failed to find key in archived B-tree map");
             assert_eq!(k, ak);
             assert_eq!(v, av);
+        }
+        assert!(archived.get_key_value("wrong!").is_none());
+
+        let deserialized: BTreeMap<_, _> = archived.deserialize(&mut Infallible).unwrap();
+        assert_eq!(value, deserialized);
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn archive_empty_btree_map() {
+        let value: BTreeMap<String, i32> = BTreeMap::new();
+
+        let mut serializer = AlignedSerializer::new(AlignedVec::new());
+        serializer.serialize_value(&value).unwrap();
+        let result = serializer.into_inner();
+        let archived = unsafe { archived_root::<BTreeMap<String, i32>>(result.as_slice()) };
+
+        assert_eq!(archived.len(), 0);
+        for _ in archived.iter() {
+            panic!("there should be no values in the archived empty btree");
         }
         assert!(archived.get_key_value("wrong!").is_none());
 

@@ -1,9 +1,10 @@
 use crate::{
     attributes::{parse_attributes, Attributes},
-    repr::{IntRepr, Repr, ReprAttr},
+    repr::{BaseRepr, IntRepr, Repr},
+    util::{add_bounds, strip_raw},
     with::{make_with_cast, make_with_ty},
 };
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, quote_spanned};
 use syn::{
     parse_quote, spanned::Spanned, Attribute, Data, DeriveInput, Error, Field, Fields, Ident,
@@ -37,7 +38,10 @@ fn derive_archive_impl(
     mut input: DeriveInput,
     attributes: &Attributes,
 ) -> Result<TokenStream, Error> {
-    input.generics.make_where_clause();
+    let where_clause = input.generics.make_where_clause();
+    if let Some(ref bounds) = attributes.archive_bound {
+        add_bounds(bounds, where_clause)?;
+    }
 
     let name = &input.ident;
     let vis = &input.vis;
@@ -63,22 +67,39 @@ fn derive_archive_impl(
                 "archived = \"...\" may not be used with as = \"...\" because no type is generated",
             ));
         }
-        if !attributes.attrs.is_empty() {
+        if let Some(first) = attributes.attrs.first() {
             return Err(Error::new_spanned(
-                name,
-                format!("archive_attr(...) may not be used with as = \"...\"\nplace any attributes on the archived type ({}) instead", archive_as.value()),
+                first,
+                format!(
+                    "\
+                        archive_attr(...) may not be used with as = \"...\"\n\
+                        place any attributes on the archived type ({}) instead\
+                    ",
+                    archive_as.value(),
+                ),
             ));
         }
-        if attributes.archived_repr.is_some() {
-            return Err(Error::new_spanned(
-                name,
-                format!("repr(...) may not be used with as = \"...\"\nplace the repr attribute on the archived type ({}) instead", archive_as.value()),
+        if let Some(span) = attributes
+            .archived_repr
+            .base_repr
+            .map(|(_, s)| s)
+            .or_else(|| attributes.archived_repr.modifier.as_ref().map(|(_, s)| *s))
+        {
+            return Err(Error::new(
+                span,
+                format!(
+                    "\
+                        repr(...) may not be used with as = \"...\"\n\
+                        place the repr attribute on the archived type ({}) instead\
+                    ",
+                    archive_as.value()
+                ),
             ));
         }
     }
 
     let archived_name = attributes.archived.as_ref().map_or_else(
-        || Ident::new(&format!("Archived{}", name), name.span()),
+        || Ident::new(&format!("Archived{}", strip_raw(name)), name.span()),
         |value| value.clone(),
     );
     let archived_doc = format!("An archived `{}`", name);
@@ -89,38 +110,31 @@ fn derive_archive_impl(
     )?;
 
     let resolver = attributes.resolver.as_ref().map_or_else(
-        || Ident::new(&format!("{}Resolver", name), name.span()),
+        || Ident::new(&format!("{}Resolver", strip_raw(name)), name.span()),
         |value| value.clone(),
     );
     let resolver_doc = format!("The resolver for archived `{}`", name);
 
     let (archive_types, archive_impls) = match input.data {
         Data::Struct(ref data) => {
-            let is_strict = cfg!(feature = "strict");
-            let is_strict_repr = matches!(
-                attributes.archived_repr,
-                None | Some(ReprAttr {
-                    repr: Repr::C,
-                    span: _
-                }) | Some(ReprAttr {
-                    repr: Repr::Transparent,
-                    span: _
+            let base_repr = if cfg!(feature = "strict") {
+                Some(match attributes.archived_repr.base_repr {
+                    // The base repr for structs may not be i*/u* in strict mode
+                    Some((BaseRepr::Int(_), span)) => return Err(Error::new(
+                        span,
+                        "archived structs may only be repr(C) or repr(transparent) in strict mode",
+                    )),
+                    // The base repr may be C or transparent in strict mode
+                    Some((repr @ BaseRepr::C | repr @ BaseRepr::Transparent, span)) => (repr, span),
+                    // If unspecified, the base repr is set to C
+                    None => (BaseRepr::C, Span::call_site()),
                 })
-            );
-            if is_strict && !is_strict_repr {
-                return Err(Error::new_spanned(
-                    name,
-                    "archived structs may only be repr(C) in strict mode",
-                ));
-            }
-
-            let repr = if is_strict {
-                Some(Repr::C)
             } else {
-                attributes
-                    .archived_repr
-                    .as_ref()
-                    .map(|repr_attr| repr_attr.repr)
+                attributes.archived_repr.base_repr
+            };
+            let repr = Repr {
+                base_repr,
+                modifier: attributes.archived_repr.modifier.clone(),
             };
 
             match data.fields {
@@ -252,7 +266,10 @@ fn derive_archive_impl(
                                     }
                                 });
                             } else {
-                                return Err(Error::new_spanned(compare, "unrecognized compare argument, supported compares are PartialEq and PartialOrd"));
+                                return Err(Error::new_spanned(
+                                    compare,
+                                    "unrecognized compare argument, supported compares are PartialEq and PartialOrd"
+                                ));
                             }
                         }
                     }
@@ -538,7 +555,10 @@ fn derive_archive_impl(
                                     }
                                 });
                             } else {
-                                return Err(Error::new_spanned(compare, "unrecognized compare argument, supported compares are PartialEq and PartialOrd"));
+                                return Err(Error::new_spanned(
+                                    compare,
+                                    "unrecognized compare argument, supported compares are PartialEq and PartialOrd",
+                                ));
                             }
                         }
                     }
@@ -645,23 +665,23 @@ fn derive_archive_impl(
 
             let resolve_arms = data.variants.iter().map(|v| {
                 let variant = &v.ident;
-                let archived_variant_name = Ident::new(&format!("ArchivedVariant{}", variant.to_string()), v.span());
+                let archived_variant_name = Ident::new(&format!("ArchivedVariant{}", strip_raw(variant)), v.span());
                 match v.fields {
                     Fields::Named(ref fields) => {
                         let self_bindings = fields.named.iter().map(|f| {
                             let name = &f.ident;
-                            let binding = Ident::new(&format!("self_{}", name.as_ref().unwrap().to_string()), name.span());
+                            let binding = Ident::new(&format!("self_{}", strip_raw(name.as_ref().unwrap())), name.span());
                             quote_spanned! { name.span() => #name: #binding }
                         });
                         let resolver_bindings = fields.named.iter().map(|f| {
                             let name = &f.ident;
-                            let binding = Ident::new(&format!("resolver_{}", name.as_ref().unwrap().to_string()), name.span());
+                            let binding = Ident::new(&format!("resolver_{}", strip_raw(name.as_ref().unwrap())), name.span());
                             quote_spanned! { binding.span() => #name: #binding }
                         });
                         let resolves = fields.named.iter().map(|f| {
                             let name = &f.ident;
-                            let self_binding = Ident::new(&format!("self_{}", name.as_ref().unwrap().to_string()), name.span());
-                            let resolver_binding = Ident::new(&format!("resolver_{}", name.as_ref().unwrap().to_string()), name.span());
+                            let self_binding = Ident::new(&format!("self_{}", strip_raw(name.as_ref().unwrap())), name.span());
+                            let resolver_binding = Ident::new(&format!("resolver_{}", strip_raw(name.as_ref().unwrap())), name.span());
                             let value = with_cast(f, parse_quote! { #self_binding });
                             quote! {
                                 let (fp, fo) = out_field!(out.#name);
@@ -724,23 +744,29 @@ fn derive_archive_impl(
                 }
             });
 
-            let archived_repr = if let Some(ref repr_attr) = attributes.archived_repr {
-                if let Repr::Int(int_repr) = repr_attr.repr {
-                    int_repr
-                } else {
-                    return Err(Error::new(
-                        repr_attr.span,
-                        "enums may only be repr(i*) or repr(u*)",
-                    ));
+            let (int_repr, int_repr_span) = match attributes.archived_repr.base_repr {
+                // The base repr for enums may not be Rust, transparent, or C
+                Some((BaseRepr::Transparent | BaseRepr::C, span)) => {
+                    return Err(Error::new(span, "enums may only be repr(i*) or repr(u*)"))
                 }
-            } else {
-                match data.variants.len() {
-                    0..=255 => IntRepr::U8,
-                    256..=65_535 => IntRepr::U16,
-                    65_536..=4_294_967_295 => IntRepr::U32,
-                    4_294_967_296..=18_446_744_073_709_551_615 => IntRepr::U64,
-                    _ => IntRepr::U128,
+                // The base repr for enums may be i*/u*
+                Some((BaseRepr::Int(int_repr), span)) => (int_repr, span),
+                // If unspecified, the base repr is set to u* with the smallest unsigned integer
+                // that can represent the number of variants
+                None => {
+                    let int_repr = match data.variants.len() {
+                        0..=255 => IntRepr::U8,
+                        256..=65_535 => IntRepr::U16,
+                        65_536..=4_294_967_295 => IntRepr::U32,
+                        4_294_967_296..=18_446_744_073_709_551_615 => IntRepr::U64,
+                        _ => IntRepr::U128,
+                    };
+                    (int_repr, Span::call_site())
                 }
+            };
+            let repr = Repr {
+                base_repr: Some((BaseRepr::Int(int_repr), int_repr_span)),
+                modifier: attributes.archived_repr.modifier.clone(),
             };
 
             let is_fieldless = data
@@ -751,10 +777,13 @@ fn derive_archive_impl(
                 not(feature = "arbitrary_enum_discriminant"),
                 any(feature = "archive_le", feature = "archive_be")
             ))]
-            if !is_fieldless && !matches!(archived_repr, IntRepr::U8 | IntRepr::I8) {
+            if !is_fieldless && !matches!(int_repr, IntRepr::U8 | IntRepr::I8) {
                 return Err(Error::new_spanned(
                     name,
-                    "enums with variant data cannot have multibyte discriminants when using endian-aware features\nenabling the `arbitrary_enum_discriminant` feature will allow this behavior",
+                    "\
+                        enums with variant data cannot have multibyte discriminants when using endian-aware features\n\
+                        enabling the `arbitrary_enum_discriminant` feature will allow this behavior\
+                    ",
                 ));
             }
 
@@ -763,7 +792,7 @@ fn derive_archive_impl(
                     let variant = &v.ident;
                     let discriminant =
                         if is_fieldless || cfg!(feature = "arbitrary_enum_discriminant") {
-                            Some(archived_repr.enum_discriminant(i))
+                            Some(int_repr.enum_discriminant(i))
                         } else {
                             None
                         };
@@ -812,7 +841,7 @@ fn derive_archive_impl(
                     #[automatically_derived]
                     #[doc = #archived_doc]
                     #(#archive_attrs)*
-                    #archived_repr
+                    #repr
                     #vis enum #archived_name #generics #archive_where {
                         #(#archived_variants,)*
                     }
@@ -823,13 +852,13 @@ fn derive_archive_impl(
 
             let archived_variant_tags = data.variants.iter().enumerate().map(|(i, v)| {
                 let variant = &v.ident;
-                let discriminant = archived_repr.enum_discriminant(i);
+                let discriminant = int_repr.enum_discriminant(i);
                 quote_spanned! { variant.span() => #variant #discriminant }
             });
 
             let archived_variant_structs = data.variants.iter().map(|v| {
                 let variant = &v.ident;
-                let archived_variant_name = Ident::new(&format!("ArchivedVariant{}", variant.to_string()), v.span());
+                let archived_variant_name = Ident::new(&format!("ArchivedVariant{}", strip_raw(variant)), v.span());
                 match v.fields {
                     Fields::Named(ref fields) => {
                         let fields = fields.named.iter().map(|f| {
@@ -901,12 +930,12 @@ fn derive_archive_impl(
                                         .collect::<Vec<_>>();
                                     let self_bindings = fields.named.iter().map(|f| {
                                         f.ident.as_ref().map(|ident| {
-                                            Ident::new(&format!("self_{}", ident.to_string()), ident.span())
+                                            Ident::new(&format!("self_{}", strip_raw(ident)), ident.span())
                                         })
                                     }).collect::<Vec<_>>();
                                     let other_bindings = fields.named.iter().map(|f| {
                                         f.ident.as_ref().map(|ident| {
-                                            Ident::new(&format!("other_{}", ident.to_string()), ident.span())
+                                            Ident::new(&format!("other_{}", strip_raw(ident)), ident.span())
                                         })
                                     }).collect::<Vec<_>>();
                                     quote! {
@@ -1025,12 +1054,12 @@ fn derive_archive_impl(
                                         .collect::<Vec<_>>();
                                     let self_bindings = fields.named.iter().map(|f| {
                                         f.ident.as_ref().map(|ident| {
-                                            Ident::new(&format!("self_{}", ident.to_string()), ident.span())
+                                            Ident::new(&format!("self_{}", strip_raw(ident)), ident.span())
                                         })
                                     }).collect::<Vec<_>>();
                                     let other_bindings = fields.named.iter().map(|f| {
                                         f.ident.as_ref().map(|ident| {
-                                            Ident::new(&format!("other_{}", ident.to_string()), ident.span())
+                                            Ident::new(&format!("other_{}", strip_raw(ident)), ident.span())
                                         })
                                     }).collect::<Vec<_>>();
                                     quote! {
@@ -1165,7 +1194,7 @@ fn derive_archive_impl(
                     }
                 },
                 quote! {
-                    #archived_repr
+                    #[repr(#int_repr)]
                     enum ArchivedTag {
                         #(#archived_variant_tags,)*
                     }

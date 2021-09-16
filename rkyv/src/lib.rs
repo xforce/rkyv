@@ -88,6 +88,8 @@
 //! Crates supported by rkyv:
 //!
 //! - [`indexmap`](https://docs.rs/indexmap)
+//! - [`rend`](https://docs.rs/rend) *Enabled automatically when using endian-specific archive
+//!   features.*
 //! - [`tinyvec`](https://docs.rs/tinyvec)
 //! - [`uuid`](https://docs.rs/uuid)
 //!
@@ -106,14 +108,15 @@
 //! - Fully worked examples using rkyv are available in the
 //!   [`examples` directory](https://github.com/rkyv/rkyv/tree/master/examples) of the source repo.
 
-#![deny(broken_intra_doc_links)]
-#![deny(missing_docs)]
-#![deny(missing_crate_level_docs)]
+#![deny(broken_intra_doc_links, missing_docs, missing_crate_level_docs)]
 #![cfg_attr(not(feature = "std"), no_std)]
-#![cfg_attr(feature = "copy", feature(auto_traits))]
-#![cfg_attr(feature = "copy", feature(min_specialization))]
-#![cfg_attr(feature = "copy", feature(negative_impls))]
-#![cfg_attr(feature = "copy", feature(rustc_attrs))]
+#![cfg_attr(
+    feature = "copy",
+    feature(auto_traits),
+    feature(min_specialization),
+    feature(negative_impls),
+    feature(rustc_attrs)
+)]
 #![doc(html_favicon_url = r#"
     data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'
     viewBox='0 0 26.458 26.458'%3E%3Cpath d='M0 0v26.458h26.458V0zm9.175 3.772l8.107 8.106
@@ -145,10 +148,12 @@ pub mod de;
 pub mod ffi;
 mod impls;
 pub mod net;
+pub mod niche;
 pub mod ops;
 pub mod option;
 pub mod rc;
 pub mod rel_ptr;
+pub mod result;
 pub mod ser;
 pub mod string;
 pub mod time;
@@ -157,6 +162,9 @@ pub mod util;
 pub mod validation;
 pub mod vec;
 pub mod with;
+
+#[cfg(feature = "rend")]
+pub use rend;
 
 use core::alloc::Layout;
 use ptr_meta::Pointee;
@@ -686,9 +694,6 @@ pub trait DeserializeUnsized<T: Pointee + ?Sized, D: Fallible + ?Sized>: Archive
     /// Deserializes the metadata for the given type.
     fn deserialize_metadata(&self, deserializer: &mut D) -> Result<T::Metadata, D::Error>;
 }
-
-#[cfg(not(any(feature = "size_16", feature = "size_32", feature = "size_64")))]
-core::compile_error!("\"size_16\", \"size_32\", or \"size_64\" feature must be eanbled for rkyv.");
 
 /// The native type that `usize` is converted to for archiving.
 ///

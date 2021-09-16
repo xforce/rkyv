@@ -284,9 +284,11 @@ const _: () = {
 /// # Example
 ///
 /// ```
-/// use std::sync::atomic::AtomicU32;
+/// # #[cfg(has_atomics)]
+/// use core::sync::atomic::AtomicU32;
 /// use rkyv::{Archive, with::Atomic};
 ///
+/// # #[cfg(has_atomics)]
 /// #[derive(Archive)]
 /// struct Example {
 ///     #[with(Atomic)]
@@ -453,3 +455,10 @@ pub struct AsOwned;
 /// ```
 #[derive(Debug)]
 pub struct AsVec;
+
+/// A wrapper that niches some type combinations.
+///
+/// A common type combination is `Option<Box<T>>`. By using a null pointer, the archived version can
+/// save some space on-disk.
+#[derive(Debug)]
+pub struct Niche;

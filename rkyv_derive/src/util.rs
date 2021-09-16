@@ -1,14 +1,18 @@
-use proc_macro2::{Group, Span, TokenStream, TokenTree};
+use proc_macro2::Ident;
+use syn::{punctuated::Punctuated, Error, LitStr, Token, WhereClause, WherePredicate};
 
-pub fn respan(stream: TokenStream, span: Span) -> TokenStream {
-    stream
-        .into_iter()
-        .map(|mut token| {
-            if let TokenTree::Group(g) = &mut token {
-                *g = Group::new(g.delimiter(), respan(g.stream(), span));
-            }
-            token.set_span(span);
-            token
-        })
-        .collect()
+pub fn add_bounds(bounds: &LitStr, where_clause: &mut WhereClause) -> Result<(), Error> {
+    let clauses = bounds.parse_with(Punctuated::<WherePredicate, Token![,]>::parse_terminated)?;
+    for clause in clauses {
+        where_clause.predicates.push(clause);
+    }
+    Ok(())
+}
+
+pub fn strip_raw(ident: &Ident) -> String {
+    let as_string = ident.to_string();
+    as_string
+        .strip_prefix("r#")
+        .map(ToString::to_string)
+        .unwrap_or(as_string)
 }

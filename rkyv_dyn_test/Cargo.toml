@@ -12,13 +12,13 @@ repository = "https://github.com/rkyv/rkyv"
 [dependencies]
 bytecheck = { version = "0.6.0", optional = true }
 ptr_meta = "~0.1.3"
-rkyv = { path = "../rkyv" }
+rkyv = { path = "../rkyv", default-features = false }
 rkyv_dyn = { path = "../rkyv_dyn", default-features = false }
 rkyv_typename = { path = "../rkyv_typename", default-features = false }
 wasm-bindgen-test = { version = "0.3", optional = true }
 
 [features]
-default = ["validation"]
+default = ["rkyv/size_32", "rkyv/std", "validation"]
 archive_le = ["rkyv/archive_le", "rkyv_dyn/archive_le"]
 archive_be = ["rkyv/archive_be", "rkyv_dyn/archive_be"]
 nightly = ["rkyv_dyn/nightly"]
@@ -26,11 +26,3 @@ strict = ["rkyv_dyn/strict"]
 validation = ["bytecheck", "rkyv_dyn/validation"]
 vtable_cache = ["rkyv_dyn/vtable_cache"]
 wasm = ["wasm-bindgen-test"]
-
-# HACK: Tests should be run with `wasm-pack test --node -- --features "wasm"` but wasm-pack runs
-# `cargo build` before `cargo test` and doesn't pass the additional arguments to the build step. To
-# work around this, we just manually add the dependencies for the `wasm` feature when the target is
-# set to `wasm32-unknown-unknown`.
-# Blocking bug: https://github.com/rustwasm/wasm-pack/issues/698
-[target.wasm32-unknown-unknown.dev-dependencies]
-wasm-bindgen-test = "0.3"

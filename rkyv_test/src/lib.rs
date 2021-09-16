@@ -45,6 +45,8 @@ mod tests {
         test_archive(&[1, 2, 3, 4, 5, 6]);
 
         test_archive(&Option::<()>::None);
+        test_archive(&Result::<i32, u32>::Ok(12345i32));
+        test_archive(&Result::<i32, u32>::Err(12345u32));
         test_archive(&Some(42));
     }
 
@@ -112,5 +114,29 @@ mod tests {
         test_archive_ref::<[MyZST]>(&[]);
         test_archive::<[MyZST; 4]>(&[MyZST, MyZST, MyZST, MyZST]);
         test_archive_ref::<[MyZST]>(&[MyZST, MyZST, MyZST, MyZST]);
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    #[allow(non_camel_case_types)]
+    fn archive_raw_identifiers() {
+        use rkyv::{Archive, Deserialize, Serialize};
+
+        #[derive(Archive, Deserialize, Serialize, Debug, PartialEq)]
+        #[archive(compare(PartialEq))]
+        #[archive_attr(derive(Debug))]
+        struct r#virtual {
+            r#virtual: i32,
+        }
+
+        #[derive(Archive, Deserialize, Serialize, Debug, PartialEq)]
+        #[archive(compare(PartialEq))]
+        #[archive_attr(derive(Debug))]
+        enum r#try {
+            r#try { r#try: i32 },
+        }
+
+        test_archive::<r#virtual>(&r#virtual { r#virtual: 42 });
+        test_archive::<r#try>(&r#try::r#try { r#try: 42 });
     }
 }

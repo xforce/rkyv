@@ -48,9 +48,9 @@ macro_rules! impl_primitive {
             #[cfg(not(any(feature = "archive_le", feature = "archive_be")))]
             type Archived = $type;
             #[cfg(feature = "archive_le")]
-            type Archived = rend::LittleEndian<$type>;
+            type Archived = crate::rend::LittleEndian<$type>;
             #[cfg(feature = "archive_be")]
-            type Archived = rend::BigEndian<$type>;
+            type Archived = crate::rend::BigEndian<$type>;
 
             impl Archive for $type {
                 type Archived = Archived;
@@ -108,9 +108,9 @@ macro_rules! impl_atomic {
             #[cfg(not(any(feature = "archive_le", feature = "archive_be")))]
             type Archived = $prim;
             #[cfg(feature = "archive_le")]
-            type Archived = rend::LittleEndian<$prim>;
+            type Archived = crate::rend::LittleEndian<$prim>;
             #[cfg(feature = "archive_be")]
-            type Archived = rend::BigEndian<$prim>;
+            type Archived = crate::rend::BigEndian<$prim>;
 
             type Resolver = ();
 

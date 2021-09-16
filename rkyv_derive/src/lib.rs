@@ -8,6 +8,7 @@ mod archive;
 mod attributes;
 mod deserialize;
 mod repr;
+mod serde;
 mod serialize;
 mod util;
 mod with;
@@ -29,14 +30,17 @@ use syn::{parse_macro_input, DeriveInput};
 ///   default, archived types are named "Archived" + `the name of the type`.
 /// - `resolver = "..."`: Changes the name of the generated resolver type to the given value. By
 ///   default, resolver types are named `the name of the type` + "Resolver".
-/// - `repr(...)`: Sets the representation for the archived type to the given representation.
-///   Available representation options may vary depending on features and type layout.
+/// - `repr(...)`: *Deprecated, use `#[archive_attr(repr(...))]` instead.* Sets the representation
+///   for the archived type to the given representation. Available representation options may vary
+///   depending on features and type layout.
 /// - `compare(...)`: Implements common comparison operators between the original and archived
 ///   types. Supported comparisons are `PartialEq` and `PartialOrd` (i.e.
 ///   `#[archive(compare(PartialEq, PartialOrd))]`).
-/// - `bound(...)`: Adds additional bounds to the `Serialize` and `Deserialize` implementations.
-///   This can be especially useful when dealing with recursive structures, where bounds may need to
-///   be omitted to prevent recursive type definitions.
+/// - `bound(...)`: Adds additional bounds to trait implementations. This can be especially useful
+///   when dealing with recursive structures, where bounds may need to be omitted to prevent
+///   recursive type definitions. Use `archive = "..."` to specify `Archive` bounds,
+///   `serialize = "..."` to specify `Serialize` bounds, and `deserialize = "..."` to specify
+///   `Deserialize` bounds.
 /// - `copy_safe`: States that the archived type is tightly packed with no padding bytes. This
 ///   qualifies it for copy optimizations. (requires nightly)
 /// - `as = "..."`: Instead of generating a separate archived type, this type will archive as the
@@ -65,7 +69,10 @@ use syn::{parse_macro_input, DeriveInput};
 /// (i.e. `#[with(A, B, C)]` will archive `MyType` as `With<With<With<MyType, C>, B, A>`).
 #[proc_macro_derive(Archive, attributes(archive, archive_attr, omit_bounds, with))]
 pub fn derive_archive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    match archive::derive(parse_macro_input!(input as DeriveInput)) {
+    let mut derive_input = parse_macro_input!(input as DeriveInput);
+    serde::receiver::replace_receiver(&mut derive_input);
+
+    match archive::derive(derive_input) {
         Ok(result) => result.into(),
         Err(e) => e.to_compile_error().into(),
     }
@@ -77,7 +84,10 @@ pub fn derive_archive(input: proc_macro::TokenStream) -> proc_macro::TokenStream
 /// [`Archive`] for more information.
 #[proc_macro_derive(Serialize, attributes(archive, omit_bounds, with))]
 pub fn derive_serialize(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    match serialize::derive(parse_macro_input!(input as DeriveInput)) {
+    let mut derive_input = parse_macro_input!(input as DeriveInput);
+    serde::receiver::replace_receiver(&mut derive_input);
+
+    match serialize::derive(derive_input) {
         Ok(result) => result.into(),
         Err(e) => e.to_compile_error().into(),
     }
@@ -89,7 +99,10 @@ pub fn derive_serialize(input: proc_macro::TokenStream) -> proc_macro::TokenStre
 /// [`Archive`] for more information.
 #[proc_macro_derive(Deserialize, attributes(archive, omit_bounds, with))]
 pub fn derive_deserialize(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    match deserialize::derive(parse_macro_input!(input as DeriveInput)) {
+    let mut derive_input = parse_macro_input!(input as DeriveInput);
+    serde::receiver::replace_receiver(&mut derive_input);
+
+    match deserialize::derive(derive_input) {
         Ok(result) => result.into(),
         Err(e) => e.to_compile_error().into(),
     }
