@@ -305,6 +305,8 @@ struct RawIter<'a, K, V> {
     _phantom: PhantomData<(&'a K, &'a V)>,
 }
 
+unsafe impl<'a, K, V> Send for RawIter<'a, K, V> {}
+
 impl<'a, K, V> RawIter<'a, K, V> {
     #[inline]
     fn new(pairs: *const Entry<K, V>, len: usize) -> Self {
