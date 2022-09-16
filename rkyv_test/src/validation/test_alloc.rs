@@ -4,7 +4,7 @@ mod tests {
     #[cfg(not(feature = "std"))]
     use alloc::{
         boxed::Box,
-        collections::BTreeMap,
+        collections::{BTreeMap, BTreeSet},
         rc::Rc,
         string::{String, ToString},
         vec,
@@ -16,7 +16,7 @@ mod tests {
         Deserialize, Infallible, Serialize,
     };
     #[cfg(feature = "std")]
-    use std::{collections::BTreeMap, rc::Rc};
+    use std::{collections::{BTreeMap, BTreeSet}, rc::Rc};
 
     #[cfg(feature = "wasm")]
     use wasm_bindgen_test::*;
@@ -421,6 +421,28 @@ mod tests {
 
     #[test]
     #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn check_invalid_b_tree_set() {
+        let data = AlignedBytes([
+            0, 0, 0, 0, 253, 6, 239, 6, 255, 255, 255, 252, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 5, 0, 0,
+            0, 0, 240, 255, 255, 255, 1, 128, 0, 249, 220, 255, 255, 255, 4, 0, 0, 96, 0, 0, 0, 249,
+            232, 255, 255, 255,
+        ]);
+
+        rkyv::from_bytes::<BTreeSet<u8>>(&data.0).unwrap_err();
+
+        let data = AlignedBytes([
+            1, 29, 0, 0, 0, 0, 0, 0, 0, 0, 3, 0, 253, 0, 0, 116, 255, 255, 40, 0, 8, 0, 0, 0, 236,
+            255, 255, 255, 1, 128, 72, 0, 220, 255, 255, 255, 236, 255, 255, 255, 0, 0, 0, 0, 32, 0,
+            255, 254, 255, 0, 94, 2, 33, 0, 0, 0, 0, 0, 0, 0, 61, 1, 38, 0, 0, 32, 0, 255, 255, 1,
+            0, 1, 255, 255, 0, 184, 4, 0, 28, 0, 8, 0, 2, 142, 255, 255, 255, 3, 1, 255, 251, 0,
+            184, 255, 255, 255,
+        ]);
+
+        rkyv::from_bytes::<BTreeSet<Box<u8>>>(&data.0).unwrap_err();
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
     fn check_empty_b_tree() {
         let value = BTreeMap::<u8, ()>::new();
 
@@ -499,5 +521,38 @@ mod tests {
         const ARCHIVED_BYTES: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
 
         assert_eq!(buf.as_ref(), &ARCHIVED_BYTES);
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn check_valid_durations() {
+        use core::time::Duration;
+
+        check_archived_root::<Duration>(&[0xFF, 16]).unwrap_err();
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn check_invalid_btreemap() {
+        let data = AlignedBytes([0, 0, 0, 0, 0, 0, 0, 0, 0, 0x30, 0, 0x00, 0x00, 0x00, 0x0c, 0xa5, 0xf0, 0xff, 0xff, 0xff]);
+        rkyv::from_bytes::<BTreeMap<u8, Box<u8>>>(&data.0).unwrap_err();
+    }
+
+    #[test]
+    #[cfg_attr(feature = "wasm", wasm_bindgen_test)]
+    fn check_invalid_string() {
+        use rkyv::validation::{CheckArchiveError, validators::CheckDeserializeError, owned::OwnedPointerError};
+
+        let data = AlignedBytes([0x0b; 8]);
+        let e = rkyv::from_bytes::<String>(&data.0).unwrap_err();
+        dbg!(&e);
+        assert!(matches!(
+            e,
+            CheckDeserializeError::CheckBytesError(
+                CheckArchiveError::CheckBytesError(
+                    OwnedPointerError::PointerCheckBytesError(_)
+                )
+            )
+        ));
     }
 }
